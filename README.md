@@ -6,6 +6,6 @@ Support and Resistance Lines will issue alerts when price gets either into a 'da
 
 ![Short-term support and resistance lines on a EUR/USD M1 chart](https://github.com/EarnForex/Support-and-Resistance-Lines/blob/main/README_Images/short-term-support-and-resistance-lines-eurusd.png)
 
-More information about this custom MetaTrader indicator is available here: https://www.earnforex.com/metatrader-indicators/support-resistance-lines/
+More information about this custom MetaTrader indicator is available here: https://www.earnforex.com/indicators/support-resistance-lines/
 
 All contributions to the code are welcome!
