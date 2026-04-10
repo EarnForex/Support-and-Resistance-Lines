@@ -1,7 +1,7 @@
-#property link          "https://www.earnforex.com/metatrader-indicators/support-resistance-lines/"
-#property version       "1.02"
+﻿#property link          "https://www.earnforex.com/metatrader-indicators/support-resistance-lines/"
+#property version       "1.03"
 #property strict
-#property copyright     "EarnForex.com - 2019-2023"
+#property copyright     "EarnForex.com - 2019-2026"
 #property description   "This indicator shows support and resistance levels."
 #property description   " "
 #property description   "WARNING: Use this software at your own risk."
@@ -11,36 +11,16 @@
 #property icon          "\\Files\\EF-Icon-64x64px.ico"
 
 #property indicator_chart_window
-#property indicator_buffers 8
 
-enum ENUM_CUSTOMTIMEFRAMES
-{
-    CURRENT = PERIOD_CURRENT, // CURRENT PERIOD
-    M1 = PERIOD_M1,           // M1
-    M5 = PERIOD_M5,           // M5
-    M15 = PERIOD_M15,         // M15
-    M30 = PERIOD_M30,         // M30
-    H1 = PERIOD_H1,           // H1
-    H4 = PERIOD_H4,           // H4
-    D1 = PERIOD_D1,           // D1
-    W1 = PERIOD_W1,           // W1
-    MN1 = PERIOD_MN1,         // MN1
-};
+#include <MQLTA Utils.mqh>
+
+#property indicator_buffers 8
 
 enum ENUM_ACCURACY
 {
     HIGH = 1,   // HIGH
     MEDIUM = 2, // MEDIUM
     LOW = 3,    // LOW
-};
-
-enum ENUM_THICKNESS
-{
-    ONE = 1,   // 1
-    TWO = 2,   // 2
-    THREE = 3, // 3
-    FOUR = 4,  // 4
-    FIVE = 5,  // 5
 };
 
 enum ENUM_WHENNOTIFY
@@ -56,14 +36,14 @@ enum ENUM_FILLBUFFERS
 };
 
 input string Comment_1 = "====================";     // Indicator Settings
-input ENUM_CUSTOMTIMEFRAMES SRTimeframe = CURRENT;   // Timeframe to Analyze
+input ENUM_TIMEFRAMES SRTimeframe = PERIOD_CURRENT;  // Timeframe to Analyze
 input ENUM_ACCURACY SRAccuracy = MEDIUM;             // Number of Levels
 input int SafeDistance = 50;                         // Safety Distance From Closest Level (points)
 input string Comment_2a = "====================";    // iCustom Utility (For Expert Advisors)
 input ENUM_FILLBUFFERS FillBuffersWith = LEVELS;     // Fill Buffers With
 input string Comment_2 = "====================";     // Limits for the Analysis
 input int BarsToIgnore = 0;                          // Recent Candles to Ignore
-input int MaxBars = 1000;                            // Bars to Analyze
+input int MaxBars = 500;                             // Bars to Analyze
 input int MaxRange = 0;                              // Max Price Range to Analyze (points) (0 = No Limit)
 input string Comment_3 = "====================";     // Notification Options
 input ENUM_WHENNOTIFY WhenNotify = DANGER;           // Notify In
@@ -71,21 +51,30 @@ input bool EnableNotify = false;                     // Enable Notifications fea
 input bool SendAlert = true;                         // Send Alert Notification
 input bool SendApp = false;                          // Send Notification to Mobile
 input bool SendEmail = false;                        // Send Notification via Email
+input bool SendSound = false;                        // Sound Alert
+input string SoundFile = "alert.wav";                // Sound File
 input string Comment_4 = "====================";     // Graphical Objects
 input bool DrawLinesEnabled = true;                  // Draw Lines
 input color ResistanceColor = clrGreen;              // Resistance Color
 input color SupportColor = clrRed;                   // Support Color
-input ENUM_THICKNESS LineThickness = THREE;          // Line Thickness
 input bool DrawZones = false;                        // Draw S/R Zones
 input color ZoneResistanceColor = clrMediumSeaGreen; // Resistance Color
 input color ZoneSupportColor = clrLightSalmon;       // Support Color
 input bool DrawWindowEnabled = true;                 // Draw Window
+input ENUM_BASE_CORNER PanelCorner = CORNER_LEFT_UPPER; // Chart Corner
 input int Xoff = 20;                                 // Horizontal spacing for the control panel
 input int Yoff = 20;                                 // Vertical spacing for the control panel
+input string Comment_5 = "====================";     // Arrow Options
+input bool DrawArrowEnabled = false;                 // Draw Arrows on Alert Conditions
+input color ArrowDangerResistanceColor = clrRed;     // Arrow Color Near Resistance
+input color ArrowDangerSupportColor = clrGreen;      // Arrow Color Near Support
+input color ArrowSafeColor = clrDodgerBlue;          // Arrow Color In Safe Area
+input int ArrowSize = 2;                             // Arrow Size (1-5)
 input string IndicatorName = "MQLTA-SR";             // Indicator Name (to name the objects)
 
 int ATRPeriod = 100;
 double Array[];
+int BarCountArray[];
 int _MaxBars = MaxBars;
 int CalculatedBars = 0;
 double LevelAbove = 0;
@@ -97,24 +86,37 @@ int LastNotificationStatus = -2; // -2 = first attachment to the chart.
 double NotificationLevel = 0;
 datetime LastNotificationTime = 0;
 double LastNotificationLevel = 0;
+datetime LastArrowTime = 0;
+int ArrowCounter = 0;
 
-double BufferZero[1];
-double BufferOne[1];
-double BufferTwo[1];
-double BufferThree[1];
-double BufferFour[1];
-double BufferFive[1];
-double BufferSix[1];
-double BufferSeven[1];
+double BufferZero[];
+double BufferOne[];
+double BufferTwo[];
+double BufferThree[];
+double BufferFour[];
+double BufferFive[];
+double BufferSix[];
+double BufferSeven[];
 
 double DPIScale; // Scaling parameter for the panel based on the screen DPI.
 int PanelMovX, PanelMovY, PanelLabX, PanelLabY, PanelRecX;
+
+bool PanelCollapsed = false;
+string GVarCollapsed; // Global variable name for saving the collapsed state.
 
 int OnInit()
 {
     IndicatorSetString(INDICATOR_SHORTNAME, IndicatorName);
 
     CleanChart();
+
+    // Load the collapsed state from a global variable specific to this chart.
+    GVarCollapsed = IndicatorName + "-Collapsed-" + IntegerToString(ChartID());
+    if (GlobalVariableCheck(GVarCollapsed))
+    {
+        PanelCollapsed = (GlobalVariableGet(GVarCollapsed) != 0);
+        GlobalVariableDel(GVarCollapsed);
+    }
 
     SetIndexBuffer(0, BufferZero);
     SetIndexBuffer(1, BufferOne);
@@ -141,8 +143,6 @@ int OnInit()
     PanelLabY = PanelMovY;
     PanelRecX = PanelLabX + 4;
 
-    CalculateLevels();
-    
     return INIT_SUCCEEDED;
 }
 
@@ -157,11 +157,6 @@ int OnCalculate(const int rates_total,
                 const long &volume[],
                 const int &spread[])
 {
-    if (CalculatedBars != prev_calculated)
-    {
-        CalculateLevels();
-        CalculatedBars = prev_calculated;
-    }
     if (iBars(Symbol(), SRTimeframe) < _MaxBars + BarsToIgnore)
     {
         _MaxBars = iBars(Symbol(), SRTimeframe) - BarsToIgnore;
@@ -172,7 +167,12 @@ int OnCalculate(const int rates_total,
         }
     }
     else _MaxBars = MaxBars;
-    CalculatedBars = prev_calculated;
+
+    if (CalculatedBars != rates_total)
+    {
+        CalculateLevels();
+    }
+    CalculatedBars = rates_total;
     
     LevelAbove = CalculateLevelAbove();
     LevelBelow = CalculateLevelBelow();
@@ -182,12 +182,12 @@ int OnCalculate(const int rates_total,
     if (LevelBelow > 0) DistanceFromSupport =    int((Close[0] - LevelBelow) / Point);
     else DistanceFromSupport = INT_MAX; // No support levels.
 
-    if (((DistanceFromResistance > 0) && (DistanceFromResistance < DistanceFromSupport)) || (DistanceFromSupport == INT_MAX))
+    if ((DistanceFromResistance >= 0 && DistanceFromResistance < DistanceFromSupport) || DistanceFromSupport == INT_MAX)
     {
         MinDistance = DistanceFromResistance;
         NotificationLevel = LevelAbove;
     }
-    if (((DistanceFromSupport > 0)    && (DistanceFromSupport < DistanceFromResistance)) || (DistanceFromResistance == INT_MAX))
+    else if ((DistanceFromSupport >= 0 && DistanceFromSupport < DistanceFromResistance) || DistanceFromResistance == INT_MAX)
     {
         MinDistance = DistanceFromSupport;
         NotificationLevel = LevelBelow;
@@ -204,11 +204,31 @@ int OnCalculate(const int rates_total,
 void OnDeinit(const int reason)
 {
     CleanChart();
+    if (reason != REASON_REMOVE) // Timeframe change, parameter change, recompilation, etc. - save the state.
+    {
+        GlobalVariableSet(GVarCollapsed, PanelCollapsed ? 1.0 : 0.0);
+    }
+}
+
+void OnChartEvent(const int id,
+                  const long &lparam,
+                  const double &dparam,
+                  const string &sparam)
+{
+    if (id == CHARTEVENT_OBJECT_CLICK) // Panel minimize/maximize.
+    {
+        if (sparam == IndicatorName + "-P-MINMAX")
+        {
+            PanelCollapsed = !PanelCollapsed;
+            ObjectsDeleteAll(0, IndicatorName + "-P-"); // Clear panel objects only - preserve lines/arrows.
+            DrawPanel();
+        }
+    }
 }
 
 void CleanChart()
 {
-    ObjectsDeleteAll(0, IndicatorName);
+    ObjectsDeleteAll(0, IndicatorName + "-");
 }
 
 void CalculateLevels()
@@ -227,6 +247,8 @@ void CalculateLevels()
     double MidRange = MaxRange / 2 * Point;
     ArrayResize(Array, Steps);
     ArrayInitialize(Array, 0);
+    ArrayResize(BarCountArray, Steps);
+    ArrayInitialize(BarCountArray, 0);
 
     for (int i = 0; i < ArraySize(Array); i++)
     {
@@ -240,9 +262,8 @@ void CalculateLevels()
         Array[i] = 0;
         for (int j = BarsToIgnore; j < _MaxBars + BarsToIgnore; j++)
         {
-            double Fractal = 0;
-            if (iFractals(NULL, SRTimeframe, MODE_UPPER, j) > 0) Fractal = iFractals(NULL, SRTimeframe, MODE_UPPER, j);
-            else if (iFractals(NULL, SRTimeframe, MODE_LOWER, j) > 0) Fractal = iFractals(NULL, SRTimeframe, MODE_LOWER, j);
+            double Fractal = iFractals(NULL, SRTimeframe, MODE_UPPER, j);
+            if (Fractal <= 0) Fractal = iFractals(NULL, SRTimeframe, MODE_LOWER, j);
             double AvgValue = 0;
 
             if ((Fractal >= StartRange) && (Fractal <= EndRange))
@@ -255,6 +276,7 @@ void CalculateLevels()
         if (BarCount > 0) AvgPrice = NormalizeDouble(TotalPrice / BarCount, Digits);
 
         Array[i] = AvgPrice;
+        BarCountArray[i] = BarCount;
     }
 }
 
@@ -333,15 +355,15 @@ void FillBuffers()
 
 void Notify()
 {
-    if ((!SendAlert) && (!SendApp) && (!SendEmail)) return;
+    if (!SendAlert && !SendApp && !SendEmail && !SendSound && !DrawArrowEnabled) return;
     if ((WhenNotify == DANGER) && (MinDistance > SafeDistance))
     {
-        LastNotificationStatus = -1; // Retourned to uncertain.
+        LastNotificationStatus = -1; // Returned to uncertain.
         return;
     }
     if ((WhenNotify == SAFETY) && (MinDistance < SafeDistance))
     {
-        LastNotificationStatus = -1; // Retourned to uncertain.
+        LastNotificationStatus = -1; // Returned to uncertain.
         return;
     }
     
@@ -352,14 +374,15 @@ void Notify()
         return;
     }
 
-    if ((LastNotificationStatus == WhenNotify) && (LastNotificationLevel == NotificationLevel)) return; // Already notified about this situation.
+    if (LastNotificationStatus == WhenNotify && MathAbs(LastNotificationLevel - NotificationLevel) < Point() / 2) return; // Already notified about this situation.
     LastNotificationStatus = WhenNotify;
 
     if (LastNotificationTime == Time[0]) // Same bar - ignore if the same level.
     {
-        if (LastNotificationLevel == NotificationLevel) return; // Don't alert if the same level is to be alerted within a short period of time.
-        Print(LastNotificationTime, " - ", LastNotificationLevel);
+        if (MathAbs(LastNotificationLevel - NotificationLevel) < Point() / 2) return; // Don't alert if the same level is to be alerted within a short period of time.
     }
+
+    if (DrawArrowEnabled) DrawArrow();
 
     string EmailSubject = IndicatorName + " " + Symbol() + " @ " + EnumToString((ENUM_TIMEFRAMES)Period()) + " Notification";
     string EmailBody = AccountCompany() + " - " + AccountName() + " - " + IntegerToString(AccountNumber()) + "\r\n" + IndicatorName + " Notification for " + Symbol() + " @ " + EnumToString((ENUM_TIMEFRAMES)Period()) + "\r\n";
@@ -380,8 +403,55 @@ void Notify()
     {
         if (!SendNotification(AppText)) Print("Error sending notification " + IntegerToString(GetLastError()));
     }
+    if (SendSound)
+    {
+        PlaySound(SoundFile);
+    }
     LastNotificationLevel = NotificationLevel;
     LastNotificationTime = Time[0];
+}
+
+void DrawArrow()
+{
+    if (LastArrowTime == Time[0]) return; // One arrow per bar.
+    LastArrowTime = Time[0];
+    ArrowCounter++;
+
+    int ArrowCode = 0;
+    color ArrowColor = clrNONE;
+    double ArrowPrice = Bid;
+
+    if (WhenNotify == DANGER)
+    {
+        if (NotificationLevel >= Close[0]) // Near resistance - down arrow.
+        {
+            ArrowCode = 234; // Wingdings down arrow.
+            ArrowColor = ArrowDangerResistanceColor;
+        }
+        else // Near support - up arrow.
+        {
+            ArrowCode = 233; // Wingdings up arrow.
+            ArrowColor = ArrowDangerSupportColor;
+        }
+    }
+    else if (WhenNotify == SAFETY)
+    {
+        ArrowCode = 168; // Wingdings diamond.
+        ArrowColor = ArrowSafeColor;
+    }
+
+    string ArrowName = IndicatorName + "-ARROW-" + IntegerToString(ArrowCounter);
+    ObjectCreate(0, ArrowName, OBJ_ARROW, 0, Time[0], ArrowPrice);
+    ObjectSetInteger(0, ArrowName, OBJPROP_ARROWCODE, ArrowCode);
+    ObjectSetInteger(0, ArrowName, OBJPROP_COLOR, ArrowColor);
+    ObjectSetInteger(0, ArrowName, OBJPROP_WIDTH, ArrowSize);
+    ObjectSetInteger(0, ArrowName, OBJPROP_SELECTABLE, false);
+    ObjectSetInteger(0, ArrowName, OBJPROP_HIDDEN, true);
+}
+
+void CleanArrows()
+{
+    ObjectsDeleteAll(0, IndicatorName + "-ARROW-");
 }
 
 void DrawLines()
@@ -391,24 +461,25 @@ void DrawLines()
     {
         if (Array[i] > 0)
         {
-            int LineNumber = int(Array[i] / Point);
-            string LineName = StringConcatenate(IndicatorName, "-HLINE-", LineNumber);
+            string LineName = IndicatorName + "-HLINE-" + DoubleToString(Array[i], _Digits);
             color Color = (Array[i] > Close[0]) ? ResistanceColor : SupportColor;
+            int LineWidth = BarCountArray[i];
+            if (LineWidth > 5) LineWidth = 5;
             ObjectCreate(0, LineName, OBJ_HLINE, 0, 0, Array[i]);
-            ObjectSet(LineName, OBJPROP_COLOR, Color);
-            ObjectSet(LineName, OBJPROP_WIDTH, LineThickness);
-            ObjectSet(LineName, OBJPROP_SELECTABLE, false);
+            ObjectSetInteger(0, LineName, OBJPROP_COLOR, Color);
+            ObjectSetInteger(0, LineName, OBJPROP_WIDTH, LineWidth);
+            ObjectSetInteger(0, LineName, OBJPROP_SELECTABLE, false);
             
             if (DrawZones)
             {
-                string ZoneName = StringConcatenate(IndicatorName, "-HLINE-Z-", LineNumber);
+                string ZoneName = IndicatorName + "-HLINE-Z-" + DoubleToString(Array[i], _Digits);
                 Color = (Array[i] > Close[0]) ? ZoneResistanceColor : ZoneSupportColor;
                 double UpperPrice = Array[i] + SafeDistance * _Point;
                 double LowerPrice = Array[i] - SafeDistance * _Point;
                 ObjectCreate(0, ZoneName, OBJ_RECTANGLE, 0, Time[_MaxBars - 1], LowerPrice, D'3000.12.31', UpperPrice);
-                ObjectSet(ZoneName, OBJPROP_COLOR, Color);
-                ObjectSet(ZoneName, OBJPROP_BACK, true);
-                ObjectSet(ZoneName, OBJPROP_SELECTABLE, false);
+                ObjectSetInteger(0, ZoneName, OBJPROP_COLOR, Color);
+                ObjectSetInteger(0, ZoneName, OBJPROP_BACK, true);
+                ObjectSetInteger(0, ZoneName, OBJPROP_SELECTABLE, false);
             }
         }
     }
@@ -449,138 +520,181 @@ double CalculateLevelBelow()
 
 string PanelBase = IndicatorName + "-P-BAS";
 string PanelLabel = IndicatorName + "-P-LAB";
+string PanelMinMax = IndicatorName + "-P-MINMAX";
 string PanelDAbove = IndicatorName + "-P-DABOVE";
 string PanelDBelow = IndicatorName + "-P-DBELOW";
 string PanelSig = IndicatorName + "-P-SIG";
 void DrawPanel()
 {
     int Rows = 1;
+
+    int TotalRows;
+    if (PanelCollapsed)
+        TotalRows = 1; // Header only.
+    else
+        TotalRows = 4; // Header + distance above + distance below + signal.
+    int PanelHeight = (PanelMovY + 1) * TotalRows + 3;
+
+    // Calculate base offsets and direction multipliers depending on the chart corner.
+    // For right corners, the panel is shifted left by its width.
+    // For lower corners, the panel is shifted up by its height.
+    int BaseX = Xoff;
+    int BaseY = Yoff;
+    int MulX = 1;
+    int MulY = 1;
+    if (PanelCorner == CORNER_RIGHT_UPPER || PanelCorner == CORNER_RIGHT_LOWER)
+    {
+        BaseX = Xoff + PanelRecX;
+        MulX = -1;
+    }
+    if (PanelCorner == CORNER_LEFT_LOWER || PanelCorner == CORNER_RIGHT_LOWER)
+    {
+        BaseY = Yoff + PanelHeight;
+        MulY = -1;
+    }
+
     ObjectCreate(0, PanelBase, OBJ_RECTANGLE_LABEL, 0, 0, 0);
-    ObjectSet(PanelBase, OBJPROP_XDISTANCE, Xoff);
-    ObjectSet(PanelBase, OBJPROP_YDISTANCE, Yoff);
+    ObjectSetInteger(0, PanelBase, OBJPROP_XDISTANCE, BaseX);
+    ObjectSetInteger(0, PanelBase, OBJPROP_YDISTANCE, BaseY);
     ObjectSetInteger(0, PanelBase, OBJPROP_XSIZE, PanelRecX);
-    ObjectSetInteger(0, PanelBase, OBJPROP_YSIZE, (PanelMovY + 2) * 1 + 2);
+    ObjectSetInteger(0, PanelBase, OBJPROP_YSIZE, PanelHeight);
     ObjectSetInteger(0, PanelBase, OBJPROP_BGCOLOR, clrWhite);
     ObjectSetInteger(0, PanelBase, OBJPROP_BORDER_TYPE, BORDER_FLAT);
     ObjectSetInteger(0, PanelBase, OBJPROP_STATE, false);
     ObjectSetInteger(0, PanelBase, OBJPROP_HIDDEN, true);
-    ObjectSetInteger(0, PanelBase, OBJPROP_FONTSIZE, 8);
-    ObjectSet(PanelBase, OBJPROP_SELECTABLE, false);
+    ObjectSetInteger(0, PanelBase, OBJPROP_FONTSIZE, int(8 * DPIScale));
+    ObjectSetInteger(0, PanelBase, OBJPROP_SELECTABLE, false);
     ObjectSetInteger(0, PanelBase, OBJPROP_COLOR, clrBlack);
+    ObjectSetInteger(0, PanelBase, OBJPROP_CORNER, PanelCorner);
 
-    ObjectCreate(0, PanelLabel, OBJ_EDIT, 0, 0, 0);
-    ObjectSet(PanelLabel, OBJPROP_XDISTANCE, Xoff + 2);
-    ObjectSet(PanelLabel, OBJPROP_YDISTANCE, Yoff + 2);
-    ObjectSetInteger(0, PanelLabel, OBJPROP_XSIZE, PanelLabX);
-    ObjectSetInteger(0, PanelLabel, OBJPROP_YSIZE, PanelLabY);
-    ObjectSetInteger(0, PanelLabel, OBJPROP_BORDER_TYPE, BORDER_FLAT);
-    ObjectSetInteger(0, PanelLabel, OBJPROP_STATE, false);
-    ObjectSetInteger(0, PanelLabel, OBJPROP_HIDDEN, true);
-    ObjectSetInteger(0, PanelLabel, OBJPROP_READONLY, true);
-    ObjectSetInteger(0, PanelLabel, OBJPROP_ALIGN, ALIGN_CENTER);
-    ObjectSetString(0, PanelLabel, OBJPROP_TOOLTIP, "Supprt/Resistance Lines");
-    ObjectSetString(0, PanelLabel, OBJPROP_TEXT, "MQLTA SUPP-RES LINES");
-    ObjectSetString(0, PanelLabel, OBJPROP_FONT, "Consolas");
-    ObjectSetInteger(0, PanelLabel, OBJPROP_FONTSIZE, 12);
-    ObjectSet(PanelLabel, OBJPROP_SELECTABLE, false);
-    ObjectSetInteger(0, PanelLabel, OBJPROP_COLOR, clrNavy);
-    ObjectSetInteger(0, PanelLabel, OBJPROP_BGCOLOR, clrKhaki);
-    ObjectSetInteger(0, PanelLabel, OBJPROP_BORDER_COLOR, clrBlack);
+    DrawEdit(PanelLabel,
+             BaseX + MulX * 2,
+             BaseY + MulY * 2,
+             PanelLabX,
+             PanelLabY,
+             true,
+             int(12 * DPIScale),
+             "Support/Resistance Lines",
+             ALIGN_CENTER,
+             "Consolas",
+             "SUPP-RES LINES",
+             false,
+             clrNavy,
+             clrKhaki,
+             clrBlack);
+    ObjectSetInteger(0, PanelLabel, OBJPROP_CORNER, PanelCorner);
 
-    string DAboveText = "";
-    if (DistanceFromResistance != INT_MAX)
-    {
-        DAboveText = StringConcatenate("To next resistance: ", DistanceFromResistance, " points");
-    }
-    else
-    {
-        DAboveText = "No resistance found";
-    }
-    ObjectCreate(0, PanelDAbove, OBJ_EDIT, 0, 0, 0);
-    ObjectSet(PanelDAbove, OBJPROP_XDISTANCE, Xoff + 2);
-    ObjectSet(PanelDAbove, OBJPROP_YDISTANCE, Yoff + (PanelMovY + 1) * Rows + 2);
-    ObjectSetInteger(0, PanelDAbove, OBJPROP_XSIZE, PanelLabX);
-    ObjectSetInteger(0, PanelDAbove, OBJPROP_YSIZE, PanelLabY);
-    ObjectSetInteger(0, PanelDAbove, OBJPROP_BORDER_TYPE, BORDER_FLAT);
-    ObjectSetInteger(0, PanelDAbove, OBJPROP_STATE, false);
-    ObjectSetInteger(0, PanelDAbove, OBJPROP_HIDDEN, true);
-    ObjectSetInteger(0, PanelDAbove, OBJPROP_READONLY, true);
-    ObjectSetInteger(0, PanelDAbove, OBJPROP_FONTSIZE, 8);
-    ObjectSetString(0, PanelDAbove, OBJPROP_TOOLTIP, "Distance To The Above Level of Resistance");
-    ObjectSetInteger(0, PanelDAbove, OBJPROP_ALIGN, ALIGN_CENTER);
-    ObjectSetString(0, PanelDAbove, OBJPROP_FONT, "Consolas");
-    ObjectSetString(0, PanelDAbove, OBJPROP_TEXT, DAboveText);
-    ObjectSet(PanelDAbove, OBJPROP_SELECTABLE, false);
-    ObjectSetInteger(0, PanelDAbove, OBJPROP_COLOR, clrNavy);
-    ObjectSetInteger(0, PanelDAbove, OBJPROP_BGCOLOR, clrKhaki);
-    ObjectSetInteger(0, PanelDAbove, OBJPROP_BORDER_COLOR, clrBlack);
-    Rows++;
+    // Minimize/maximize button in the top-right corner of the header.
+    // For upper corners, collapsed shows down arrow (expand downward), expanded shows up arrow (collapse upward).
+    // For lower corners, the arrows are reversed since the panel expands upward.
+    bool BottomCorner = (PanelCorner == CORNER_LEFT_LOWER || PanelCorner == CORNER_RIGHT_LOWER);
+    bool ShowDownArrow = (PanelCollapsed && !BottomCorner) || (!PanelCollapsed && BottomCorner);
+    string MinMaxText = ShowDownArrow ? CharToString(226) : CharToString(225);
+    DrawEdit(PanelMinMax,
+             BaseX + MulX * (PanelLabX - PanelMovY + 2),
+             BaseY + MulY * 2,
+             PanelMovY,
+             PanelLabY,
+             true,
+             int(8 * DPIScale),
+             PanelCollapsed ? "Expand Panel" : "Collapse Panel",
+             ALIGN_CENTER,
+             "Wingdings",
+             MinMaxText,
+             false,
+             clrNavy,
+             clrKhaki,
+             clrBlack);
+    ObjectSetInteger(0, PanelMinMax, OBJPROP_CORNER, PanelCorner);
 
-    string DBelowText = "";
-    if (DistanceFromSupport != INT_MAX)
+    if (!PanelCollapsed)
     {
-        DBelowText = StringConcatenate("To next support: ", DistanceFromSupport, " points");
-    }
-    else
-    {
-        DBelowText = "No support found";
-    }
-    ObjectCreate(0, PanelDBelow, OBJ_EDIT, 0, 0, 0);
-    ObjectSet(PanelDBelow, OBJPROP_XDISTANCE, Xoff + 2);
-    ObjectSet(PanelDBelow, OBJPROP_YDISTANCE, Yoff + (PanelMovY + 1) * Rows + 2);
-    ObjectSetInteger(0, PanelDBelow, OBJPROP_XSIZE, PanelLabX);
-    ObjectSetInteger(0, PanelDBelow, OBJPROP_YSIZE, PanelLabY);
-    ObjectSetInteger(0, PanelDBelow, OBJPROP_BORDER_TYPE, BORDER_FLAT);
-    ObjectSetInteger(0, PanelDBelow, OBJPROP_STATE, false);
-    ObjectSetInteger(0, PanelDBelow, OBJPROP_HIDDEN, true);
-    ObjectSetInteger(0, PanelDBelow, OBJPROP_READONLY, true);
-    ObjectSetInteger(0, PanelDBelow, OBJPROP_FONTSIZE, 8);
-    ObjectSetString(0, PanelDBelow, OBJPROP_TOOLTIP, "Distance To The Below Level of Support");
-    ObjectSetInteger(0, PanelDBelow, OBJPROP_ALIGN, ALIGN_CENTER);
-    ObjectSetString(0, PanelDBelow, OBJPROP_FONT, "Consolas");
-    ObjectSetString(0, PanelDBelow, OBJPROP_TEXT, DBelowText);
-    ObjectSet(PanelDBelow, OBJPROP_SELECTABLE, false);
-    ObjectSetInteger(0, PanelDBelow, OBJPROP_COLOR, clrNavy);
-    ObjectSetInteger(0, PanelDBelow, OBJPROP_BGCOLOR, clrKhaki);
-    ObjectSetInteger(0, PanelDBelow, OBJPROP_BORDER_COLOR, clrBlack);
-    Rows++;
+        string DAboveText = "";
+        if (DistanceFromResistance != INT_MAX)
+        {
+            DAboveText = "To next resistance: " + IntegerToString(DistanceFromResistance) + " points";
+        }
+        else
+        {
+            DAboveText = "No resistance found";
+        }
+        DrawEdit(PanelDAbove,
+                 BaseX + MulX * 2,
+                 BaseY + MulY * ((PanelMovY + 1) * Rows + 2),
+                 PanelLabX,
+                 PanelLabY,
+                 true,
+                 int(8 * DPIScale),
+                 "Distance to the Above Level of Resistance",
+                 ALIGN_CENTER,
+                 "Consolas",
+                 DAboveText,
+                 false,
+                 clrNavy,
+                 clrKhaki,
+                 clrBlack);
+        ObjectSetInteger(0, PanelDAbove, OBJPROP_CORNER, PanelCorner);
+        Rows++;
 
-    string SigText = "";
-    color SigColor = clrNavy;
-    color SigBack = clrKhaki;
-    if (MinDistance > SafeDistance)
-    {
-        SigText = "SAFE TO TRADE";
-        SigColor = clrWhite;
-        SigBack = clrDarkGreen;
-    }
-    else
-    {
-        SigText = "WAIT TO TRADE";
-        SigColor = clrWhite;
-        SigBack = clrDarkRed;
-    }
-    ObjectCreate(0, PanelSig, OBJ_EDIT, 0, 0, 0);
-    ObjectSet(PanelSig, OBJPROP_XDISTANCE, Xoff + 2);
-    ObjectSet(PanelSig, OBJPROP_YDISTANCE, Yoff + (PanelMovY + 1) * Rows + 2);
-    ObjectSetInteger(0, PanelSig, OBJPROP_XSIZE, PanelLabX);
-    ObjectSetInteger(0, PanelSig, OBJPROP_YSIZE, PanelLabY);
-    ObjectSetInteger(0, PanelSig, OBJPROP_BORDER_TYPE, BORDER_FLAT);
-    ObjectSetInteger(0, PanelSig, OBJPROP_STATE, false);
-    ObjectSetInteger(0, PanelSig, OBJPROP_HIDDEN, true);
-    ObjectSetInteger(0, PanelSig, OBJPROP_READONLY, true);
-    ObjectSetInteger(0, PanelSig, OBJPROP_FONTSIZE, 8);
-    ObjectSetInteger(0, PanelSig, OBJPROP_ALIGN, ALIGN_CENTER);
-    ObjectSetString(0, PanelSig, OBJPROP_FONT, "Consolas");
-    ObjectSetString(0, PanelSig, OBJPROP_TOOLTIP, "Suggestion Based On The Safe Distance Set");
-    ObjectSetString(0, PanelSig, OBJPROP_TEXT, SigText);
-    ObjectSet(PanelSig, OBJPROP_SELECTABLE, false);
-    ObjectSetInteger(0, PanelSig, OBJPROP_COLOR, SigColor);
-    ObjectSetInteger(0, PanelSig, OBJPROP_BGCOLOR, SigBack);
-    ObjectSetInteger(0, PanelSig, OBJPROP_BORDER_COLOR, clrBlack);
-    Rows++;
+        string DBelowText = "";
+        if (DistanceFromSupport != INT_MAX)
+        {
+            DBelowText = "To next support: " + IntegerToString(DistanceFromSupport) + " points";
+        }
+        else
+        {
+            DBelowText = "No support found";
+        }
+        DrawEdit(PanelDBelow,
+                 BaseX + MulX * 2,
+                 BaseY + MulY * ((PanelMovY + 1) * Rows + 2),
+                 PanelLabX,
+                 PanelLabY,
+                 true,
+                 int(8 * DPIScale),
+                 "Distance to the Below Level of Support",
+                 ALIGN_CENTER,
+                 "Consolas",
+                 DBelowText,
+                 false,
+                 clrNavy,
+                 clrKhaki,
+                 clrBlack);
+        ObjectSetInteger(0, PanelDBelow, OBJPROP_CORNER, PanelCorner);
+        Rows++;
 
-    ObjectSetInteger(0, PanelBase, OBJPROP_XSIZE, PanelRecX);
-    ObjectSetInteger(0, PanelBase, OBJPROP_YSIZE, (PanelMovY + 1)*Rows + 3);
+        string SigText = "";
+        color SigColor = clrNavy;
+        color SigBack = clrKhaki;
+        if (MinDistance > SafeDistance)
+        {
+            SigText = "SAFE TO TRADE";
+            SigColor = clrWhite;
+            SigBack = clrDarkGreen;
+        }
+        else
+        {
+            SigText = "WAIT TO TRADE";
+            SigColor = clrWhite;
+            SigBack = clrDarkRed;
+        }
+        DrawEdit(PanelSig,
+                 BaseX + MulX * 2,
+                 BaseY + MulY * ((PanelMovY + 1) * Rows + 2),
+                 PanelLabX,
+                 PanelLabY,
+                 true,
+                 int(8 * DPIScale),
+                 "Suggestion Based on the Safe Distance Set",
+                 ALIGN_CENTER,
+                 "Consolas",
+                 SigText,
+                 false,
+                 SigColor,
+                 SigBack,
+                 clrBlack);
+        ObjectSetInteger(0, PanelSig, OBJPROP_CORNER, PanelCorner);
+        Rows++;
+    }
 }
 //+------------------------------------------------------------------+
